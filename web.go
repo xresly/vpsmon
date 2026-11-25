@@ -370,11 +370,11 @@ func (a *App) handleServerPage(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := a.getCfg()
 	renderServer(w, s, serverPageData{
-		Cfg:      cfg.Server,
-		Saved:    r.URL.Query().Get("saved") == "1",
-		NodeNum:  len(a.mergedNodes()),
+		Cfg:       cfg.Server,
+		Saved:     r.URL.Query().Get("saved") == "1",
+		NodeNum:   len(a.mergedNodes()),
 		PanelPort: cfg.Web.Port,
-		TLS:      cfg.Web.TLSCert != "",
+		TLS:       cfg.Web.TLSCert != "",
 	})
 }
 

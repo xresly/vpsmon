@@ -60,25 +60,25 @@ type minuteSample struct {
 }
 
 type agentState struct {
-	BootID       string         `json:"boot_id"`
-	Ifaces       []string       `json:"ifaces"`
-	LastRawRX    uint64         `json:"last_raw_rx"`
-	LastRawTX    uint64         `json:"last_raw_tx"`
-	LifeRX       uint64         `json:"life_rx"`
-	LifeTX       uint64         `json:"life_tx"`
-	SeedBytes    float64        `json:"seed_bytes"` // initial used for the current cycle
-	NextReset    string         `json:"next_reset"` // effective next reset moment (dtLayout)
-	CfgNextReset string         `json:"cfg_next_reset"`
-	CycleStartRX uint64         `json:"cycle_start_rx"`
-	CycleStartTX uint64         `json:"cycle_start_tx"`
+	BootID       string   `json:"boot_id"`
+	Ifaces       []string `json:"ifaces"`
+	LastRawRX    uint64   `json:"last_raw_rx"`
+	LastRawTX    uint64   `json:"last_raw_tx"`
+	LifeRX       uint64   `json:"life_rx"`
+	LifeTX       uint64   `json:"life_tx"`
+	SeedBytes    float64  `json:"seed_bytes"` // initial used for the current cycle
+	NextReset    string   `json:"next_reset"` // effective next reset moment (dtLayout)
+	CfgNextReset string   `json:"cfg_next_reset"`
+	CycleStartRX uint64   `json:"cycle_start_rx"`
+	CycleStartTX uint64   `json:"cycle_start_tx"`
 
 	// ResetAdvanced is set by sample() when a rollover pushed
 	// NextReset forward; the runner persists it to the config.
-	ResetAdvanced bool `json:"-"`
-	Samples      []minuteSample `json:"samples"`
-	LastCPUTotal uint64         `json:"last_cpu_total"`
-	LastCPUIdle  uint64         `json:"last_cpu_idle"`
-	CPUPcts      []float64      `json:"cpu_pcts"`
+	ResetAdvanced bool           `json:"-"`
+	Samples       []minuteSample `json:"samples"`
+	LastCPUTotal  uint64         `json:"last_cpu_total"`
+	LastCPUIdle   uint64         `json:"last_cpu_idle"`
+	CPUPcts       []float64      `json:"cpu_pcts"`
 }
 
 func combined(rx, tx uint64, mode string) uint64 {

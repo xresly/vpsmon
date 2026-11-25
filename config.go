@@ -37,7 +37,7 @@ func parseDateTime(s string) (time.Time, bool) {
 type WebConfig struct {
 	Port     int    `json:"port"`
 	Username string `json:"username"`
-	Password string `json:"password"` // pbkdf2 hash, never plaintext
+	Password string `json:"password"`  // pbkdf2 hash, never plaintext
 	APIToken string `json:"api_token"` // read-only token for /api/nodes
 	TLSCert  string `json:"tls_cert"`
 	TLSKey   string `json:"tls_key"`

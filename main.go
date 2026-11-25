@@ -4,11 +4,12 @@
 // similar in spirit to 3x-ui.
 //
 // Subcommands:
-//   vpsmon run        run the daemon (default; used by systemd)
-//   vpsmon init       create the initial config (used by install.sh)
-//   vpsmon menu       interactive management menu (like x-ui)
-//   vpsmon resetpass  set panel username/password from the shell
-//   vpsmon version
+//
+//	vpsmon run        run the daemon (default; used by systemd)
+//	vpsmon init       create the initial config (used by install.sh)
+//	vpsmon menu       interactive management menu (like x-ui)
+//	vpsmon resetpass  set panel username/password from the shell
+//	vpsmon version
 //
 // Go standard library only.
 package main
@@ -25,7 +26,7 @@ import (
 	"syscall"
 )
 
-const version = "1.3.0"
+const version = "1.4.0"
 
 // bytesPerG — all traffic figures in config, reports and the
 // dashboard are in G (1 G = 1024^3 bytes).

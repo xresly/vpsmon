@@ -88,7 +88,9 @@ bash <(curl -Ls https://raw.githubusercontent.com/xresly/vpsmon/main/install.sh)
   会在恢复后补滚。
 - **安全**：面板密码 PBKDF2-HMAC-SHA256 加盐哈希存储；登录失败 5 次锁定 10 分钟；
   上报与读取使用两套独立 token，均以常量时间比较；所有写操作带 CSRF token。
-  面板支持填证书路径启用 HTTPS（证书续期后自动重读，无需重启）。
+  面板支持填证书路径启用 HTTPS（证书续期后自动重读，无需重启）。配了证书后
+  面板端口是双协议的：通过域名访问走 HTTPS、HTTP 自动 308 跳转到 HTTPS；
+  通过 localhost / IP 等本地方式访问则直接走 HTTP，不强制跳转。
 
 ## 从源码构建
 
@@ -113,6 +115,8 @@ systemctl daemon-reload
 
 ## 版本
 
+- v1.4.0：配了 TLS 证书时面板端口双协议——域名访问走 HTTPS 且 HTTP 自动
+  跳转 HTTPS，本地/IP 访问走 HTTP 不强制。
 - v1.3.0：流量重置规则改版——取消每月重置日/重置时间，改为「下次重置日期」
   （精确到分）：到达该时刻自动重置，之后每次顺延 30 天；到期时间同样精确到分。
 - v1.2.3：每月重置时刻支持精确到分——客户端设置新增「每月重置时间

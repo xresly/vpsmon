@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -138,9 +140,10 @@ type App struct {
 	selfMu sync.RWMutex
 	self   *nodeEntry
 
-	httpMu sync.Mutex
-	srv    *http.Server
-	ln     net.Listener
+	httpMu   sync.Mutex
+	srv      *http.Server
+	srvPlain *http.Server // plain-HTTP server in dual-protocol mode
+	ln       net.Listener
 }
 
 func newApp(cfgPath string, cfg *AppConfig) *App {
@@ -276,6 +279,171 @@ func (a *App) mergedNodes() []*nodeEntry {
 
 // ---------- HTTP supervisor ----------
 
+// serveOn starts serving the panel on ln. With a TLS certificate
+// configured, the port is dual-protocol: each connection's first
+// byte decides HTTPS vs HTTP (0x16 opens a TLS handshake). Plain
+// HTTP stays available for local/IP access, while HTTP requests
+// addressed to a domain name are redirected to HTTPS. Without a
+// certificate, the port is plain HTTP only.
+func (a *App) serveOn(ln net.Listener, cfg *AppConfig) (srv, plain *http.Server, err error) {
+	if cfg.Web.TLSCert == "" || cfg.Web.TLSKey == "" {
+		srv = &http.Server{Handler: a.routes(), ReadHeaderTimeout: 10 * time.Second}
+		go func() {
+			if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+				log.Printf("vpsmon: http serve: %v", err)
+			}
+		}()
+		return srv, nil, nil
+	}
+	if _, err := tls.LoadX509KeyPair(cfg.Web.TLSCert, cfg.Web.TLSKey); err != nil {
+		return nil, nil, fmt.Errorf("loading TLS key pair: %w", err)
+	}
+	certFile, keyFile := cfg.Web.TLSCert, cfg.Web.TLSKey
+	tlsCfg := &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+			cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+			if err != nil {
+				return nil, err
+			}
+			return &cert, nil
+		},
+	}
+	d := newDemux(ln)
+	srv = &http.Server{Handler: a.routes(), TLSConfig: tlsCfg, ReadHeaderTimeout: 10 * time.Second}
+	go func() {
+		if err := srv.ServeTLS(d.tlsL, "", ""); err != nil && err != http.ErrServerClosed {
+			log.Printf("vpsmon: https serve: %v", err)
+		}
+	}()
+	plain = &http.Server{Handler: a.plainHandler(), ReadHeaderTimeout: 10 * time.Second}
+	go func() {
+		if err := plain.Serve(d.httpL); err != nil && err != http.ErrServerClosed {
+			log.Printf("vpsmon: http serve: %v", err)
+		}
+	}()
+	return srv, plain, nil
+}
+
+// plainHandler serves the panel over plain HTTP, except that
+// requests addressed to a public domain name are permanently
+// redirected to the HTTPS version of the same URL.
+func (a *App) plainHandler() http.Handler {
+	app := a.routes()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isDomainHost(r.Host) {
+			http.Redirect(w, r, "https://"+r.Host+r.URL.RequestURI(), http.StatusPermanentRedirect)
+			return
+		}
+		app.ServeHTTP(w, r)
+	})
+}
+
+// isDomainHost reports whether a Host header names a public domain
+// (as opposed to local access: an IP literal, localhost, a bare
+// hostname, or a LAN suffix like .local/.lan/.home/.internal).
+func isDomainHost(hostport string) bool {
+	h := hostport
+	if hh, _, err := net.SplitHostPort(h); err == nil {
+		h = hh
+	}
+	h = strings.Trim(strings.TrimSuffix(h, "."), "[]")
+	if h == "" || strings.EqualFold(h, "localhost") {
+		return false
+	}
+	if net.ParseIP(h) != nil {
+		return false
+	}
+	lh := strings.ToLower(h)
+	for _, suf := range []string{".local", ".lan", ".home", ".internal", ".intranet"} {
+		if strings.HasSuffix(lh, suf) {
+			return false
+		}
+	}
+	return strings.Contains(h, ".")
+}
+
+// ---------- dual-protocol demultiplexer ----------
+
+type peekConn struct {
+	net.Conn
+	r *bufio.Reader
+}
+
+func (c *peekConn) Read(b []byte) (int, error) { return c.r.Read(b) }
+
+type chanListener struct {
+	ch   chan net.Conn
+	addr net.Addr
+	done chan struct{}
+	once sync.Once
+}
+
+func newChanListener(addr net.Addr) *chanListener {
+	return &chanListener{ch: make(chan net.Conn, 16), addr: addr, done: make(chan struct{})}
+}
+
+func (l *chanListener) Accept() (net.Conn, error) {
+	select {
+	case c := <-l.ch:
+		return c, nil
+	case <-l.done:
+		return nil, net.ErrClosed
+	}
+}
+
+func (l *chanListener) Close() error {
+	l.once.Do(func() { close(l.done) })
+	return nil
+}
+
+func (l *chanListener) Addr() net.Addr { return l.addr }
+
+type demux struct {
+	ln    net.Listener
+	tlsL  *chanListener
+	httpL *chanListener
+}
+
+func newDemux(ln net.Listener) *demux {
+	d := &demux{ln: ln, tlsL: newChanListener(ln.Addr()), httpL: newChanListener(ln.Addr())}
+	go d.loop()
+	return d
+}
+
+func (d *demux) loop() {
+	for {
+		c, err := d.ln.Accept()
+		if err != nil {
+			d.tlsL.Close()
+			d.httpL.Close()
+			return
+		}
+		go d.route(c)
+	}
+}
+
+func (d *demux) route(c net.Conn) {
+	_ = c.SetReadDeadline(time.Now().Add(10 * time.Second))
+	br := bufio.NewReader(c)
+	b, err := br.Peek(1)
+	_ = c.SetReadDeadline(time.Time{})
+	if err != nil {
+		c.Close()
+		return
+	}
+	target := d.httpL
+	if b[0] == 0x16 { // TLS handshake record type
+		target = d.tlsL
+	}
+	pc := &peekConn{Conn: c, r: br}
+	select {
+	case target.ch <- pc:
+	case <-target.done:
+		c.Close()
+	}
+}
+
 func (a *App) startHTTP() error {
 	a.httpMu.Lock()
 	defer a.httpMu.Unlock()
@@ -285,34 +453,16 @@ func (a *App) startHTTP() error {
 	if err != nil {
 		return err
 	}
-	if cfg.Web.TLSCert != "" && cfg.Web.TLSKey != "" {
-		if _, err := tls.LoadX509KeyPair(cfg.Web.TLSCert, cfg.Web.TLSKey); err != nil {
-			ln.Close()
-			return fmt.Errorf("loading TLS key pair: %w", err)
-		}
-		certFile, keyFile := cfg.Web.TLSCert, cfg.Web.TLSKey
-		tlsCfg := &tls.Config{
-			MinVersion: tls.VersionTLS12,
-			GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
-				cert, err := tls.LoadX509KeyPair(certFile, keyFile)
-				if err != nil {
-					return nil, err
-				}
-				return &cert, nil
-			},
-		}
-		ln = tls.NewListener(ln, tlsCfg)
+	srv, plain, err := a.serveOn(ln, cfg)
+	if err != nil {
+		ln.Close()
+		return err
 	}
-	srv := &http.Server{Handler: a.routes(), ReadHeaderTimeout: 10 * time.Second}
-	a.srv = srv
-	a.ln = ln
-	go func() {
-		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
-			log.Printf("vpsmon: http serve: %v", err)
-		}
-	}()
+	a.srv, a.srvPlain, a.ln = srv, plain, ln
 	scheme := "http"
-	if cfg.Web.TLSCert != "" {
+	if plain != nil {
+		scheme = "http+https (domains redirect to https)"
+	} else if cfg.Web.TLSCert != "" {
 		scheme = "https"
 	}
 	log.Printf("vpsmon %s panel listening on %s://%s", version, scheme, addr)
@@ -323,7 +473,7 @@ func (a *App) startHTTP() error {
 // listener is created first; if that fails the old one keeps running.
 func (a *App) restartHTTP() error {
 	a.httpMu.Lock()
-	old := a.srv
+	old, oldPlain, oldLn := a.srv, a.srvPlain, a.ln
 	a.httpMu.Unlock()
 
 	cfg := a.getCfg()
@@ -332,50 +482,40 @@ func (a *App) restartHTTP() error {
 	if err != nil {
 		return err
 	}
-	if cfg.Web.TLSCert != "" && cfg.Web.TLSKey != "" {
-		if _, err := tls.LoadX509KeyPair(cfg.Web.TLSCert, cfg.Web.TLSKey); err != nil {
-			ln.Close()
-			return fmt.Errorf("loading TLS key pair: %w", err)
-		}
-		certFile, keyFile := cfg.Web.TLSCert, cfg.Web.TLSKey
-		tlsCfg := &tls.Config{
-			MinVersion: tls.VersionTLS12,
-			GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
-				cert, err := tls.LoadX509KeyPair(certFile, keyFile)
-				if err != nil {
-					return nil, err
-				}
-				return &cert, nil
-			},
-		}
-		ln = tls.NewListener(ln, tlsCfg)
+	srv, plain, err := a.serveOn(ln, cfg)
+	if err != nil {
+		ln.Close()
+		return err
 	}
-	srv := &http.Server{Handler: a.routes(), ReadHeaderTimeout: 10 * time.Second}
 	a.httpMu.Lock()
-	a.srv = srv
-	a.ln = ln
+	a.srv, a.srvPlain, a.ln = srv, plain, ln
 	a.httpMu.Unlock()
-	if old != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		_ = old.Shutdown(ctx)
-		cancel()
-	}
-	go func() {
-		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
-			log.Printf("vpsmon: http serve: %v", err)
+	for _, s := range []*http.Server{old, oldPlain} {
+		if s != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			_ = s.Shutdown(ctx)
+			cancel()
 		}
-	}()
+	}
+	if oldLn != nil {
+		oldLn.Close()
+	}
 	log.Printf("vpsmon: panel now listening on %s", addr)
 	return nil
 }
 
 func (a *App) shutdownHTTP() {
 	a.httpMu.Lock()
-	srv := a.srv
+	srv, plain, ln := a.srv, a.srvPlain, a.ln
 	a.httpMu.Unlock()
-	if srv != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		_ = srv.Shutdown(ctx)
-		cancel()
+	for _, s := range []*http.Server{srv, plain} {
+		if s != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			_ = s.Shutdown(ctx)
+			cancel()
+		}
+	}
+	if ln != nil {
+		ln.Close()
 	}
 }
