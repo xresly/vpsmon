@@ -167,7 +167,7 @@ type dashboardData struct {
 
 var dashTmpl = template.Must(template.New("dash").Funcs(funcMap).Parse(`
 <h1>VPS 监控</h1>
-<div class="sub">每 5 分钟汇报 · 页面每 60 秒自动刷新 · 单位 G（小于 1 G 显示为 M）{{if not .ServerEnabled}} · 服务端未启用{{end}}{{if not .ClientEnabled}} · 本机客户端未启用{{end}}</div>
+<div class="sub">页面每 60 秒自动刷新 · 单位 G（小于 1 G 显示为 M）{{if not .ServerEnabled}} · 服务端未启用{{end}}{{if not .ClientEnabled}} · 本机客户端未启用{{end}}</div>
 {{if and (not .ServerEnabled) (not .ClientEnabled)}}<div class="card hint">服务端与客户端都未启用。去 <a href="/server" style="color:#93c5fd">服务端</a> 打开汇总，或去 <a href="/client" style="color:#93c5fd">客户端</a> 把本机接入一台服务端。</div>{{end}}
 <table>
 <tr><th>节点</th><th>状态</th><th>CPU</th><th>内存</th><th>磁盘</th><th>当月流量（已用 / 配额）</th><th>剩余</th><th>过去 5 分钟</th><th>累计</th><th>下次重置</th><th>到期</th><th>最后汇报</th></tr>
@@ -217,7 +217,7 @@ type clientPageData struct {
 
 var clientTmpl = template.Must(template.New("client").Funcs(funcMap).Parse(`
 <h1>客户端设置</h1>
-<div class="sub">本机作为客户端，每 5 分钟向服务端汇报一次</div>
+<div class="sub">本机作为客户端，每 {{.Cfg.ReportIntervalSec}} 秒向服务端汇报一次</div>
 {{if .Saved}}<div class="ok">已保存并生效</div>{{end}}
 <div class="card" style="margin-bottom:18px">
 <div>状态：{{if .Running}}<span class="dot on"></span>运行中{{else}}<span class="dot off"></span>未运行{{end}}

@@ -195,16 +195,29 @@ func (a *agentState) sample(cfg *ClientConfig, now time.Time) {
 				pct = 100
 			}
 			a.CPUPcts = append(a.CPUPcts, pct)
-			if len(a.CPUPcts) > 5 {
-				a.CPUPcts = a.CPUPcts[len(a.CPUPcts)-5:]
+			// keep roughly the last 5 minutes of samples, whatever the
+			// configured sample interval is (at least 5 entries).
+			keep := 5
+			if cfg.SampleIntervalSec > 0 && 300/cfg.SampleIntervalSec > keep {
+				keep = 300 / cfg.SampleIntervalSec
+			}
+			if len(a.CPUPcts) > keep {
+				a.CPUPcts = a.CPUPcts[len(a.CPUPcts)-keep:]
 			}
 		}
 		a.LastCPUTotal, a.LastCPUIdle = total, idle
 	}
 
 	a.Samples = append(a.Samples, minuteSample{T: now, LifeRX: a.LifeRX, LifeTX: a.LifeTX})
-	if len(a.Samples) > 15 {
-		a.Samples = a.Samples[len(a.Samples)-15:]
+	// keep roughly the last 15 minutes of samples, whatever the
+	// configured sample interval is (at least 15 entries), so the
+	// past-5-minutes window always has a baseline to diff against.
+	keepS := 15
+	if cfg.SampleIntervalSec > 0 && 900/cfg.SampleIntervalSec > keepS {
+		keepS = 900 / cfg.SampleIntervalSec
+	}
+	if len(a.Samples) > keepS {
+		a.Samples = a.Samples[len(a.Samples)-keepS:]
 	}
 }
 

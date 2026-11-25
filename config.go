@@ -60,10 +60,10 @@ func (c *AppConfig) applyDefaults() {
 		c.Web.Username = "admin"
 	}
 	if c.Client.SampleIntervalSec <= 0 {
-		c.Client.SampleIntervalSec = 60
+		c.Client.SampleIntervalSec = 30
 	}
 	if c.Client.ReportIntervalSec <= 0 {
-		c.Client.ReportIntervalSec = 300
+		c.Client.ReportIntervalSec = 60
 	}
 	if c.Client.TrafficMode == "" {
 		c.Client.TrafficMode = "both"
