@@ -10,6 +10,24 @@ import (
 var funcMap = template.FuncMap{
 	"f1": func(v float64) string { return fmt.Sprintf("%.1f", v) },
 	"f2": func(v float64) string { return fmt.Sprintf("%.2f", v) },
+	// gu formats a value given in G with an adaptive unit: below 1 G it
+	// is shown in M (1 G = 1024 M), otherwise in G.
+	"gu": func(v float64) string {
+		if v < 1 {
+			m := v * 1024
+			if m <= 0 {
+				return "0 M"
+			}
+			if m < 10 {
+				return fmt.Sprintf("%.1f M", m)
+			}
+			return fmt.Sprintf("%.0f M", m)
+		}
+		if v < 10 {
+			return fmt.Sprintf("%.2f G", v)
+		}
+		return fmt.Sprintf("%.1f G", v)
+	},
 	"pct": func(v float64) string { return fmt.Sprintf("%.0f%%", v) },
 	"barpct": func(used, quota float64) float64 {
 		if quota <= 0 {
@@ -149,7 +167,7 @@ type dashboardData struct {
 
 var dashTmpl = template.Must(template.New("dash").Funcs(funcMap).Parse(`
 <h1>VPS 监控</h1>
-<div class="sub">每 5 分钟汇报 · 页面每 60 秒自动刷新 · 流量单位 G{{if not .ServerEnabled}} · 服务端未启用{{end}}{{if not .ClientEnabled}} · 本机客户端未启用{{end}}</div>
+<div class="sub">每 5 分钟汇报 · 页面每 60 秒自动刷新 · 单位 G（小于 1 G 显示为 M）{{if not .ServerEnabled}} · 服务端未启用{{end}}{{if not .ClientEnabled}} · 本机客户端未启用{{end}}</div>
 {{if and (not .ServerEnabled) (not .ClientEnabled)}}<div class="card hint">服务端与客户端都未启用。去 <a href="/server" style="color:#93c5fd">服务端</a> 打开汇总，或去 <a href="/client" style="color:#93c5fd">客户端</a> 把本机接入一台服务端。</div>{{end}}
 <table>
 <tr><th>节点</th><th>状态</th><th>CPU</th><th>内存</th><th>磁盘</th><th>当月流量（已用 / 配额）</th><th>剩余</th><th>过去 5 分钟</th><th>累计</th><th>下次重置</th><th>到期</th><th>最后汇报</th></tr>
@@ -158,12 +176,12 @@ var dashTmpl = template.Must(template.New("dash").Funcs(funcMap).Parse(`
 <td><strong>{{.Report.Node}}</strong>{{if .Self}} <small>(本机)</small>{{end}}<br><small>{{.Report.Hostname}} · {{.Report.OS}}</small><form method="post" action="/nodes/delete" onsubmit="return confirm('从看板删除节点 {{.Report.Node}}？客户端不受影响，下次上报后会重新出现。')"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="node" value="{{.Report.Node}}"><button type="submit" class="delbtn">删除</button></form></td>
 <td data-label="状态">{{if .Online}}<span class="dot on"></span>在线{{else}}<span class="dot off"></span>离线{{end}}</td>
 <td data-label="CPU">{{pct .Report.CPUPct}}<br><small>5 分钟均值 {{pct .Report.CPUPct5m}}</small></td>
-<td data-label="内存">{{f2 .Report.MemUsedG}} / {{f2 .Report.MemTotalG}} G<br><small>{{pct .Report.MemPct}}</small></td>
-<td data-label="磁盘">{{f1 .Report.DiskUsedG}} / {{f1 .Report.DiskTotalG}} G<br><small>{{pct .Report.DiskPct}}</small></td>
-<td data-label="当月流量"><span class="bar"><i style="width:{{barpct .Report.Traffic.CycleUsedG .Report.Traffic.QuotaG}}%" class="{{if gt (barpct .Report.Traffic.CycleUsedG .Report.Traffic.QuotaG) 95.0}}bad{{else if gt (barpct .Report.Traffic.CycleUsedG .Report.Traffic.QuotaG) 80.0}}warn{{end}}"></i></span>{{f1 .Report.Traffic.CycleUsedG}} / {{f1 .Report.Traffic.QuotaG}} G</td>
-<td data-label="剩余">{{f1 .Report.Traffic.RemainingG}} G</td>
-<td data-label="过去 5 分钟">{{f2 .Report.Traffic.Last5mG}} G</td>
-<td data-label="累计">{{f1 .Report.Traffic.TotalG}} G</td>
+<td data-label="内存">{{gu .Report.MemUsedG}} / {{gu .Report.MemTotalG}}<br><small>{{pct .Report.MemPct}}</small></td>
+<td data-label="磁盘">{{gu .Report.DiskUsedG}} / {{gu .Report.DiskTotalG}}<br><small>{{pct .Report.DiskPct}}</small></td>
+<td data-label="当月流量"><span class="bar"><i style="width:{{barpct .Report.Traffic.CycleUsedG .Report.Traffic.QuotaG}}%" class="{{if gt (barpct .Report.Traffic.CycleUsedG .Report.Traffic.QuotaG) 95.0}}bad{{else if gt (barpct .Report.Traffic.CycleUsedG .Report.Traffic.QuotaG) 80.0}}warn{{end}}"></i></span>{{gu .Report.Traffic.CycleUsedG}} / {{gu .Report.Traffic.QuotaG}}</td>
+<td data-label="剩余">{{gu .Report.Traffic.RemainingG}}</td>
+<td data-label="过去 5 分钟">{{gu .Report.Traffic.Last5mG}}</td>
+<td data-label="累计">{{gu .Report.Traffic.TotalG}}</td>
 <td data-label="下次重置">{{.Report.Traffic.NextReset}}<br><small>每月 {{.Report.Traffic.ResetDay}} 日</small></td>
 <td data-label="到期">{{if .Report.Traffic.Expiry}}{{.Report.Traffic.Expiry}}{{if .Report.Traffic.DaysLeft}}<br><small>剩 {{.Report.Traffic.DaysLeft}} 天</small>{{end}}{{else}}-{{end}}</td>
 <td data-label="最后汇报">{{ago .ReceivedAt}}</td>
@@ -204,7 +222,7 @@ var clientTmpl = template.Must(template.New("client").Funcs(funcMap).Parse(`
 <div class="card" style="margin-bottom:18px">
 <div>状态：{{if .Running}}<span class="dot on"></span>运行中{{else}}<span class="dot off"></span>未运行{{end}}
 {{if .Last}} · 最近汇报 {{timef .LastAt}}{{if .LastError}} · <span style="color:#fca5a5">失败：{{.LastError}}</span>{{end}}<br>
-当月已用 {{f1 .Last.Traffic.CycleUsedG}} / {{f1 .Last.Traffic.QuotaG}} G · 剩余 {{f1 .Last.Traffic.RemainingG}} G · 累计 {{f1 .Last.Traffic.TotalG}} G{{end}}</div>
+当月已用 {{gu .Last.Traffic.CycleUsedG}} / {{gu .Last.Traffic.QuotaG}} · 剩余 {{gu .Last.Traffic.RemainingG}} · 累计 {{gu .Last.Traffic.TotalG}}{{end}}</div>
 </div>
 <form method="post" action="/client" class="card">
 <input type="hidden" name="csrf" value="{{.CSRF}}">
