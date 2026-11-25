@@ -22,6 +22,7 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("/server/gentoken", a.requireAuth(a.handleGenIngestToken))
 	mux.HandleFunc("/settings", a.requireAuth(a.handleSettings))
 	mux.HandleFunc("/settings/genapi", a.requireAuth(a.handleGenAPIToken))
+	mux.HandleFunc("/nodes/delete", a.requireAuth(a.handleDeleteNode))
 	mux.HandleFunc("/api/report", a.handleReport)
 	mux.HandleFunc("/api/nodes", a.handleNodes)
 	return mux
@@ -48,7 +49,7 @@ func (a *App) requireAuth(h http.HandlerFunc) http.HandlerFunc {
 		if r.URL.Path != "/" && r.URL.Path != "/client" && r.URL.Path != "/server" &&
 			r.URL.Path != "/settings" && r.URL.Path != "/logout" &&
 			!strings.HasPrefix(r.URL.Path, "/client/") && !strings.HasPrefix(r.URL.Path, "/server/") &&
-			!strings.HasPrefix(r.URL.Path, "/settings/") {
+			!strings.HasPrefix(r.URL.Path, "/settings/") && !strings.HasPrefix(r.URL.Path, "/nodes/") {
 			http.NotFound(w, r)
 			return
 		}
@@ -239,11 +240,40 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg := a.getCfg()
-	renderDashboard(w, a.currentSession(r), dashboardData{
+	s := a.currentSession(r)
+	data := dashboardData{
 		Nodes:         a.mergedNodes(),
 		ServerEnabled: cfg.Server.Enabled,
 		ClientEnabled: cfg.Client.Enabled,
-	})
+	}
+	if s != nil {
+		data.CSRF = s.CSRF
+	}
+	renderDashboard(w, s, data)
+}
+
+// handleDeleteNode removes a node from the dashboard only. The client
+// keeps reporting on its own schedule and reappears with its next report.
+func (a *App) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !a.checkCSRF(w, r) {
+		return
+	}
+	name := strings.TrimSpace(r.FormValue("node"))
+	if name != "" {
+		a.store.delete(name)
+		// The local node also lives in the self-sink; drop that copy too.
+		// The agent rebuilds it on its next sample (within a minute).
+		a.selfMu.Lock()
+		if a.self != nil && a.self.Report.Node == name {
+			a.self = nil
+		}
+		a.selfMu.Unlock()
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (a *App) handleClient(w http.ResponseWriter, r *http.Request) {

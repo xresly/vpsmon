@@ -71,6 +71,8 @@ button.alt{background:#374151}
 .err{background:#7f1d1d;color:#fecaca;padding:10px 14px;border-radius:8px;margin-bottom:14px;max-width:640px}
 .hint{color:#9aa4b2;font-size:13px;line-height:1.6}
 code{background:#26303c;padding:1px 5px;border-radius:4px;word-break:break-all}
+.delbtn{background:none;border:1px solid #374151;color:#9aa4b2;border-radius:6px;padding:3px 12px;font-size:12px;cursor:pointer;margin-top:5px;min-height:28px}
+.delbtn:hover{color:#f87171;border-color:#f87171}
 @media (max-width:860px){
 body{padding:12px}
 h1{font-size:18px}h2{font-size:15px;margin:18px 0 6px}
@@ -142,6 +144,7 @@ type dashboardData struct {
 	Nodes         []*nodeEntry
 	ServerEnabled bool
 	ClientEnabled bool
+	CSRF          string
 }
 
 var dashTmpl = template.Must(template.New("dash").Funcs(funcMap).Parse(`
@@ -152,7 +155,7 @@ var dashTmpl = template.Must(template.New("dash").Funcs(funcMap).Parse(`
 <tr><th>节点</th><th>状态</th><th>CPU</th><th>内存</th><th>磁盘</th><th>当月流量（已用 / 配额）</th><th>剩余</th><th>过去 5 分钟</th><th>累计</th><th>下次重置</th><th>到期</th><th>最后汇报</th></tr>
 {{range .Nodes}}
 <tr>
-<td><strong>{{.Report.Node}}</strong>{{if .Self}} <small>(本机)</small>{{end}}<br><small>{{.Report.Hostname}} · {{.Report.OS}}</small></td>
+<td><strong>{{.Report.Node}}</strong>{{if .Self}} <small>(本机)</small>{{end}}<br><small>{{.Report.Hostname}} · {{.Report.OS}}</small><form method="post" action="/nodes/delete" onsubmit="return confirm('从看板删除节点 {{.Report.Node}}？客户端不受影响，下次上报后会重新出现。')"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="node" value="{{.Report.Node}}"><button type="submit" class="delbtn">删除</button></form></td>
 <td data-label="状态">{{if .Online}}<span class="dot on"></span>在线{{else}}<span class="dot off"></span>离线{{end}}</td>
 <td data-label="CPU">{{pct .Report.CPUPct}}<br><small>5 分钟均值 {{pct .Report.CPUPct5m}}</small></td>
 <td data-label="内存">{{f2 .Report.MemUsedG}} / {{f2 .Report.MemTotalG}} G<br><small>{{pct .Report.MemPct}}</small></td>

@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -24,14 +27,74 @@ type nodeEntry struct {
 type nodeStore struct {
 	mu    sync.RWMutex
 	nodes map[string]*nodeEntry
+	file  string // persistence path; "" = in-memory only
 }
 
 func newNodeStore() *nodeStore { return &nodeStore{nodes: map[string]*nodeEntry{}} }
 
+// setFile enables disk persistence and restores any previously saved
+// node data, so the dashboard survives server restarts.
+func (s *nodeStore) setFile(path string) {
+	s.file = path
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var entries []*nodeEntry
+	if json.Unmarshal(b, &entries) != nil {
+		return
+	}
+	s.mu.Lock()
+	for _, e := range entries {
+		if e != nil && e.Report.Node != "" {
+			s.nodes[e.Report.Node] = e
+		}
+	}
+	n := len(s.nodes)
+	s.mu.Unlock()
+	if n > 0 {
+		log.Printf("vpsmon: restored %d node(s) from %s", n, path)
+	}
+}
+
+// saveLocked writes the whole node set to disk atomically.
+// The caller must hold s.mu (write lock).
+func (s *nodeStore) saveLocked() {
+	if s.file == "" {
+		return
+	}
+	entries := make([]*nodeEntry, 0, len(s.nodes))
+	for _, e := range s.nodes {
+		entries = append(entries, e)
+	}
+	b, err := json.Marshal(entries)
+	if err != nil {
+		return
+	}
+	tmp := s.file + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err == nil {
+		_ = os.Rename(tmp, s.file)
+	}
+}
+
 func (s *nodeStore) put(rep Report) {
 	s.mu.Lock()
 	s.nodes[rep.Node] = &nodeEntry{Report: rep, ReceivedAt: time.Now()}
+	s.saveLocked()
 	s.mu.Unlock()
+}
+
+// delete removes a node from the dashboard. The client is unaffected:
+// its next report simply adds the node back.
+func (s *nodeStore) delete(name string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.nodes[name]; !ok {
+		return false
+	}
+	delete(s.nodes, name)
+	s.saveLocked()
+	return true
 }
 
 func (s *nodeStore) snapshot() []*nodeEntry {
@@ -81,7 +144,7 @@ type App struct {
 }
 
 func newApp(cfgPath string, cfg *AppConfig) *App {
-	return &App{
+	a := &App{
 		cfgPath:  cfgPath,
 		cfg:      cfg,
 		store:    newNodeStore(),
@@ -89,6 +152,10 @@ func newApp(cfgPath string, cfg *AppConfig) *App {
 		fails:    map[string][]time.Time{},
 		agent:    &agentStatus{},
 	}
+	if cfg.StateFile != "" {
+		a.store.setFile(filepath.Join(filepath.Dir(cfg.StateFile), "server-nodes.json"))
+	}
+	return a
 }
 
 func (a *App) getCfg() *AppConfig {
