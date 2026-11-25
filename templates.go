@@ -8,6 +8,15 @@ import (
 )
 
 var funcMap = template.FuncMap{
+	// dtLocal converts a stored datetime ("2006-01-02 15:04", or a
+	// legacy date-only value) into the "2006-01-02T15:04" shape a
+	// datetime-local input expects.
+	"dtLocal": func(s string) string {
+		if t, ok := parseDateTime(s); ok {
+			return t.Format("2006-01-02T15:04")
+		}
+		return ""
+	},
 	"f1": func(v float64) string { return fmt.Sprintf("%.1f", v) },
 	"f2": func(v float64) string { return fmt.Sprintf("%.2f", v) },
 	// gu formats a value given in G with an adaptive unit: below 1 G it
@@ -170,7 +179,7 @@ var dashTmpl = template.Must(template.New("dash").Funcs(funcMap).Parse(`
 <div class="sub">页面每 60 秒自动刷新 · 单位 G（小于 1 G 显示为 M）{{if not .ServerEnabled}} · 服务端未启用{{end}}{{if not .ClientEnabled}} · 本机客户端未启用{{end}}</div>
 {{if and (not .ServerEnabled) (not .ClientEnabled)}}<div class="card hint">服务端与客户端都未启用。去 <a href="/server" style="color:#93c5fd">服务端</a> 打开汇总，或去 <a href="/client" style="color:#93c5fd">客户端</a> 把本机接入一台服务端。</div>{{end}}
 <table>
-<tr><th>节点</th><th>状态</th><th>CPU</th><th>内存</th><th>磁盘</th><th>当月流量（已用 / 配额）</th><th>剩余</th><th>过去 5 分钟</th><th>累计</th><th>下次重置</th><th>到期</th><th>最后汇报</th></tr>
+<tr><th>节点</th><th>状态</th><th>CPU</th><th>内存</th><th>磁盘</th><th>本周期流量（已用 / 配额）</th><th>剩余</th><th>过去 5 分钟</th><th>累计</th><th>下次重置</th><th>到期</th><th>最后汇报</th></tr>
 {{range .Nodes}}
 <tr>
 <td><strong>{{.Report.Node}}</strong>{{if .Self}} <small>(本机)</small>{{end}}<br><small>{{.Report.Hostname}} · {{.Report.OS}}</small><form method="post" action="/nodes/delete" onsubmit="return confirm('从看板删除节点 {{.Report.Node}}？客户端不受影响，下次上报后会重新出现。')"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="node" value="{{.Report.Node}}"><button type="submit" class="delbtn">删除</button></form></td>
@@ -178,11 +187,11 @@ var dashTmpl = template.Must(template.New("dash").Funcs(funcMap).Parse(`
 <td data-label="CPU">{{pct .Report.CPUPct}}<br><small>5 分钟均值 {{pct .Report.CPUPct5m}}</small></td>
 <td data-label="内存">{{gu .Report.MemUsedG}} / {{gu .Report.MemTotalG}}<br><small>{{pct .Report.MemPct}}</small></td>
 <td data-label="磁盘">{{gu .Report.DiskUsedG}} / {{gu .Report.DiskTotalG}}<br><small>{{pct .Report.DiskPct}}</small></td>
-<td data-label="当月流量"><span class="bar"><i style="width:{{barpct .Report.Traffic.CycleUsedG .Report.Traffic.QuotaG}}%" class="{{if gt (barpct .Report.Traffic.CycleUsedG .Report.Traffic.QuotaG) 95.0}}bad{{else if gt (barpct .Report.Traffic.CycleUsedG .Report.Traffic.QuotaG) 80.0}}warn{{end}}"></i></span>{{gu .Report.Traffic.CycleUsedG}} / {{gu .Report.Traffic.QuotaG}}</td>
+<td data-label="本周期流量"><span class="bar"><i style="width:{{barpct .Report.Traffic.CycleUsedG .Report.Traffic.QuotaG}}%" class="{{if gt (barpct .Report.Traffic.CycleUsedG .Report.Traffic.QuotaG) 95.0}}bad{{else if gt (barpct .Report.Traffic.CycleUsedG .Report.Traffic.QuotaG) 80.0}}warn{{end}}"></i></span>{{gu .Report.Traffic.CycleUsedG}} / {{gu .Report.Traffic.QuotaG}}</td>
 <td data-label="剩余">{{gu .Report.Traffic.RemainingG}}</td>
 <td data-label="过去 5 分钟">{{gu .Report.Traffic.Last5mG}}</td>
 <td data-label="累计">{{gu .Report.Traffic.TotalG}}</td>
-<td data-label="下次重置">{{.Report.Traffic.NextReset}}<br><small>每月 {{.Report.Traffic.ResetDay}} 日{{if and .Report.Traffic.ResetTime (ne .Report.Traffic.ResetTime "00:00")}} {{.Report.Traffic.ResetTime}}{{end}}</small></td>
+<td data-label="下次重置">{{if .Report.Traffic.NextReset}}{{.Report.Traffic.NextReset}}<br><small>每 30 天</small>{{else}}-{{end}}</td>
 <td data-label="到期">{{if .Report.Traffic.Expiry}}{{.Report.Traffic.Expiry}}{{if .Report.Traffic.DaysLeft}}<br><small>剩 {{.Report.Traffic.DaysLeft}} 天</small>{{end}}{{else}}-{{end}}</td>
 <td data-label="最后汇报">{{ago .ReceivedAt}}</td>
 </tr>
@@ -222,7 +231,7 @@ var clientTmpl = template.Must(template.New("client").Funcs(funcMap).Parse(`
 <div class="card" style="margin-bottom:18px">
 <div>状态：{{if .Running}}<span class="dot on"></span>运行中{{else}}<span class="dot off"></span>未运行{{end}}
 {{if .Last}} · 最近汇报 {{timef .LastAt}}{{if .LastError}} · <span style="color:#fca5a5">失败：{{.LastError}}</span>{{end}}<br>
-当月已用 {{gu .Last.Traffic.CycleUsedG}} / {{gu .Last.Traffic.QuotaG}} · 剩余 {{gu .Last.Traffic.RemainingG}} · 累计 {{gu .Last.Traffic.TotalG}}{{end}}</div>
+本周期已用 {{gu .Last.Traffic.CycleUsedG}} / {{gu .Last.Traffic.QuotaG}} · 剩余 {{gu .Last.Traffic.RemainingG}} · 累计 {{gu .Last.Traffic.TotalG}}{{end}}</div>
 </div>
 <form method="post" action="/client" class="card">
 <input type="hidden" name="csrf" value="{{.CSRF}}">
@@ -235,13 +244,11 @@ var clientTmpl = template.Must(template.New("client").Funcs(funcMap).Parse(`
 <input type="text" name="node_name" value="{{.Cfg.NodeName}}">
 <label>流量配额（G）</label>
 <input type="number" step="0.1" name="quota_g" value="{{.Cfg.QuotaG}}">
-<label>每月重置日（1-28）</label>
-<input type="number" name="reset_day" value="{{.Cfg.ResetDay}}">
-<label>每月重置时间（时:分）</label>
-<input type="time" name="reset_time" value="{{.Cfg.ResetTime}}">
-<div class="hint">重置时刻按本机时区，精确到分 — 建议与服务商的实际重置时刻对齐（如面板显示 21:18 重置就填 21:18）。</div>
-<label>到期日（YYYY-MM-DD，可空）</label>
-<input type="text" name="expiry" value="{{.Cfg.Expiry}}">
+<label>下次重置日期（精确到分，可空）</label>
+<input type="datetime-local" name="next_reset" value="{{dtLocal .Cfg.NextReset}}">
+<div class="hint">流量按 30 天一个周期：到达这个时刻自动重置已用流量，并把下次重置顺延 30 天（本机时区）。留空 = 不自动重置。</div>
+<label>到期时间（精确到分，可空）</label>
+<input type="datetime-local" name="expiry" value="{{dtLocal .Cfg.Expiry}}">
 <label>初始已用流量（G）— 仅在首次运行或重新播种时生效</label>
 <input type="number" step="0.1" name="initial_used_g" value="{{.Cfg.InitialUsedG}}">
 <label>计费口径</label>
@@ -266,8 +273,8 @@ var clientTmpl = template.Must(template.New("client").Funcs(funcMap).Parse(`
 <h2>重新播种</h2>
 <form method="post" action="/client/reseed" class="card" onsubmit="return confirm('将清空本机流量账本并按下面的已用量重新开始，确定？')">
 <input type="hidden" name="csrf" value="{{.CSRF}}">
-<div class="hint">清空本机累计计数，把"当月已用"设为下面这个数（G，通常填面板上当前的已用量），然后重新开始记账。换套餐、改重置日、或账对不上时用。</div>
-<label>当月已用（G）</label>
+<div class="hint">清空本机累计计数，把"本周期已用"设为下面这个数（G，通常填面板上当前的已用量），然后重新开始记账。换套餐、改重置日期、或账对不上时用。</div>
+<label>本周期已用（G）</label>
 <input type="number" step="0.1" name="seed_g" value="0">
 <button class="btn alt" type="submit">重新播种</button>
 </form>`))

@@ -292,13 +292,19 @@ func (a *App) handleClient(w http.ResponseWriter, r *http.Request) {
 		}
 		c.NodeName = fStr(r, "node_name", c.NodeName)
 		c.QuotaG = fFloat(r, "quota_g", c.QuotaG)
-		c.ResetDay = fInt(r, "reset_day", c.ResetDay)
-		if rt := strings.TrimSpace(r.FormValue("reset_time")); rt != "" {
-			if _, _, ok := parseResetTime(rt); ok {
-				c.ResetTime = rt
-			}
+		// Datetime fields arrive as "YYYY-MM-DDTHH:MM" from
+		// datetime-local inputs; store them in dtLayout. An empty
+		// value clears the setting; an unparseable one is ignored.
+		if v := strings.TrimSpace(r.FormValue("next_reset")); v == "" {
+			c.NextReset = ""
+		} else if t, ok := parseDateTime(strings.Replace(v, "T", " ", 1)); ok {
+			c.NextReset = t.Format(dtLayout)
 		}
-		c.Expiry = strings.TrimSpace(r.FormValue("expiry"))
+		if v := strings.TrimSpace(r.FormValue("expiry")); v == "" {
+			c.Expiry = ""
+		} else if t, ok := parseDateTime(strings.Replace(v, "T", " ", 1)); ok {
+			c.Expiry = t.Format(dtLayout)
+		}
 		c.InitialUsedG = fFloat(r, "initial_used_g", c.InitialUsedG)
 		c.TrafficMode = fStr(r, "traffic_mode", c.TrafficMode)
 		c.Interface = fStr(r, "interface", c.Interface)

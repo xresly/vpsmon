@@ -26,8 +26,6 @@ type TrafficReport struct {
 	Last5mTXG       float64 `json:"last5m_tx_g"`
 	Last5mWindowSec int     `json:"last5m_window_sec"`
 	TotalG          float64 `json:"total_g"` // lifetime counted, combined
-	ResetDay        int     `json:"reset_day"`
-	ResetTime       string  `json:"reset_time"`
 	NextReset       string  `json:"next_reset"`
 	Expiry          string  `json:"expiry"`
 	DaysLeft        *int    `json:"days_left,omitempty"`
@@ -69,9 +67,14 @@ type agentState struct {
 	LifeRX       uint64         `json:"life_rx"`
 	LifeTX       uint64         `json:"life_tx"`
 	SeedBytes    float64        `json:"seed_bytes"` // initial used for the current cycle
-	CycleKey     string         `json:"cycle_key"`  // cycle start date, local time
+	NextReset    string         `json:"next_reset"` // effective next reset moment (dtLayout)
+	CfgNextReset string         `json:"cfg_next_reset"`
 	CycleStartRX uint64         `json:"cycle_start_rx"`
 	CycleStartTX uint64         `json:"cycle_start_tx"`
+
+	// ResetAdvanced is set by sample() when a rollover pushed
+	// NextReset forward; the runner persists it to the config.
+	ResetAdvanced bool `json:"-"`
 	Samples      []minuteSample `json:"samples"`
 	LastCPUTotal uint64         `json:"last_cpu_total"`
 	LastCPUIdle  uint64         `json:"last_cpu_idle"`
@@ -94,22 +97,16 @@ func combined(rx, tx uint64, mode string) uint64 {
 	}
 }
 
-// cycleStartFor returns the most recent monthly reset moment <= now:
-// resetDay (clamped to 1..28) at resetTime ("HH:MM", local).
-func cycleStartFor(now time.Time, resetDay int, resetTime string) time.Time {
-	if resetDay < 1 {
-		resetDay = 1
+// advanceReset moves a reset moment forward in 30-day steps until
+// it is strictly in the future of now. rolled reports whether the
+// moment had been reached at all (i.e. a cycle rollover is due).
+func advanceReset(t, now time.Time) (time.Time, bool) {
+	rolled := false
+	for !now.Before(t) {
+		t = t.AddDate(0, 0, 30)
+		rolled = true
 	}
-	if resetDay > 28 {
-		resetDay = 28
-	}
-	hh, mm, _ := parseResetTime(resetTime)
-	loc := now.Location()
-	cand := time.Date(now.Year(), now.Month(), resetDay, hh, mm, 0, 0, loc)
-	if cand.After(now) {
-		cand = cand.AddDate(0, -1, 0)
-	}
-	return cand
+	return t, rolled
 }
 
 func (a *agentState) save(path string) error {
@@ -176,21 +173,24 @@ func (a *agentState) sample(cfg *ClientConfig, now time.Time) {
 	}
 	a.LastRawRX, a.LastRawTX = raw.RX, raw.TX
 
-	// cycle rollover
-	cycleStart := cycleStartFor(now, cfg.ResetDay, cfg.ResetTime)
-	key := cycleStart.Format("2006-01-02 15:04")
-	if a.CycleKey != key {
-		// Migration: keys written before reset_time existed are
-		// date-only. If the date still matches this cycle's start,
-		// only the key format changed — adopt it without rolling
-		// over (the seed and baseline stay valid).
-		if len(a.CycleKey) == 10 && a.CycleKey == cycleStart.Format("2006-01-02") {
-			a.CycleKey = key
-		} else {
-			a.CycleKey = key
-			a.SeedBytes = 0
-			a.CycleStartRX = a.LifeRX
-			a.CycleStartTX = a.LifeTX
+	// Reset schedule: traffic runs in fixed 30-day cycles. The
+	// config's next_reset is the authoritative schedule — adopt it
+	// whenever it changes (settings edit, first run). Once the
+	// moment passes, the cycle rolls over and the next reset is
+	// exactly 30 days later, however long the agent was down.
+	if cfg.NextReset != a.CfgNextReset {
+		a.CfgNextReset = cfg.NextReset
+		a.NextReset = cfg.NextReset
+	}
+	if a.NextReset != "" {
+		if t, ok := parseDateTime(a.NextReset); ok {
+			if nt, rolled := advanceReset(t, now); rolled {
+				a.SeedBytes = 0
+				a.CycleStartRX = a.LifeRX
+				a.CycleStartTX = a.LifeTX
+				a.NextReset = nt.Format(dtLayout)
+				a.ResetAdvanced = true
+			}
 		}
 	}
 
@@ -305,11 +305,7 @@ func (a *agentState) buildReport(cfg *ClientConfig, now time.Time) Report {
 			rep.DiskPct = float64(used) / float64(tot) * 100
 		}
 	}
-	cycleStart := cycleStartFor(now, cfg.ResetDay, cfg.ResetTime)
-	nextReset := cycleStart.AddDate(0, 1, 0).Format("2006-01-02")
-	if hh, mm, _ := parseResetTime(cfg.ResetTime); hh != 0 || mm != 0 {
-		nextReset = cycleStart.AddDate(0, 1, 0).Format("2006-01-02 15:04")
-	}
+	nextReset := a.NextReset
 	tr := TrafficReport{
 		QuotaG:          cfg.QuotaG,
 		CycleUsedG:      cycleUsedB / bytesPerG,
@@ -320,8 +316,6 @@ func (a *agentState) buildReport(cfg *ClientConfig, now time.Time) Report {
 		Last5mTXG:       float64(dTX) / bytesPerG,
 		Last5mWindowSec: windowSec,
 		TotalG:          float64(combined(a.LifeRX, a.LifeTX, mode)) / bytesPerG,
-		ResetDay:        cfg.ResetDay,
-		ResetTime:       cfg.ResetTime,
 		NextReset:       nextReset,
 		Expiry:          cfg.Expiry,
 	}
@@ -329,12 +323,13 @@ func (a *agentState) buildReport(cfg *ClientConfig, now time.Time) Report {
 	if tr.RemainingG < 0 {
 		tr.RemainingG = 0
 	}
-	if cfg.Expiry != "" {
-		if exp, err := time.ParseInLocation("2006-01-02", cfg.Expiry, now.Location()); err == nil {
-			today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-			d := int(exp.Sub(today).Hours() / 24)
-			tr.DaysLeft = &d
-		}
+	if exp, ok := parseDateTime(cfg.Expiry); ok {
+		// whole calendar days from today to the expiry date; the
+		// exact expiry moment travels in the Expiry field itself.
+		expDay := time.Date(exp.Year(), exp.Month(), exp.Day(), 0, 0, 0, 0, now.Location())
+		today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+		d := int(expDay.Sub(today).Hours() / 24)
+		tr.DaysLeft = &d
 	}
 	rep.Traffic = tr
 	return rep
@@ -401,8 +396,10 @@ func (s *agentStatus) setRunning(v bool) {
 
 // runAgent runs the client agent until ctx is cancelled. selfSink, when
 // non-nil, receives every built report so the local WebUI can show this
-// node even when it reports to a remote server.
-func runAgent(ctx context.Context, cfg ClientConfig, stateFile string, status *agentStatus, selfSink func(Report)) {
+// node even when it reports to a remote server. onAdvance, when non-nil,
+// is called with the new next-reset moment after a cycle rollover so
+// the caller can persist it back to the config.
+func runAgent(ctx context.Context, cfg ClientConfig, stateFile string, status *agentStatus, selfSink func(Report), onAdvance func(string)) {
 	status.setRunning(true)
 	defer status.setRunning(false)
 
@@ -415,7 +412,6 @@ func runAgent(ctx context.Context, cfg ClientConfig, stateFile string, status *a
 		state = &agentState{
 			BootID:    readBootID(),
 			SeedBytes: cfg.InitialUsedG * bytesPerG,
-			CycleKey:  cycleStartFor(now, cfg.ResetDay, cfg.ResetTime).Format("2006-01-02 15:04"),
 		}
 		dev := readNetDev()
 		ifaces := pickInterfaces(&cfg, dev)
@@ -428,6 +424,12 @@ func runAgent(ctx context.Context, cfg ClientConfig, stateFile string, status *a
 		log.Printf("vpsmon: agent first run for node %q, seeding cycle with %.2f G already used", cfg.NodeName, cfg.InitialUsedG)
 	}
 	state.sample(&cfg, now)
+	if state.ResetAdvanced {
+		state.ResetAdvanced = false
+		if onAdvance != nil {
+			onAdvance(state.NextReset)
+		}
+	}
 	if err := state.save(stateFile); err != nil {
 		log.Printf("vpsmon: saving state: %v", err)
 	}
@@ -457,6 +459,12 @@ func runAgent(ctx context.Context, cfg ClientConfig, stateFile string, status *a
 			return
 		case t := <-sampleTicker.C:
 			state.sample(&cfg, t)
+			if state.ResetAdvanced {
+				state.ResetAdvanced = false
+				if onAdvance != nil {
+					onAdvance(state.NextReset)
+				}
+			}
 			if err := state.save(stateFile); err != nil {
 				log.Printf("vpsmon: saving state: %v", err)
 			}

@@ -199,6 +199,16 @@ func (a *App) applyClient() {
 		a.selfMu.Lock()
 		a.self = &nodeEntry{Report: rep, ReceivedAt: time.Now(), Self: true, Online: true}
 		a.selfMu.Unlock()
+	}, func(next string) {
+		// A rollover advanced the reset schedule: persist the new
+		// next-reset moment so the settings page and restarts see
+		// it. Config-only update — the agent keeps running.
+		c := a.getCfg()
+		cp := *c
+		cp.Client.NextReset = next
+		if err := a.updateCfg(&cp); err != nil {
+			log.Printf("vpsmon: persisting next reset: %v", err)
+		}
 	})
 }
 

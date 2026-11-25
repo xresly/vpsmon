@@ -5,20 +5,28 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
+	"strings"
+	"time"
 )
 
-// parseResetTime parses an "HH:MM" string into hour and minute.
-func parseResetTime(s string) (int, int, bool) {
-	if len(s) != 5 || s[2] != ':' {
-		return 0, 0, false
+// dtLayout is the canonical storage format for datetimes in the
+// config and reports: minute precision, local time.
+const dtLayout = "2006-01-02 15:04"
+
+// parseDateTime parses a stored datetime ("YYYY-MM-DD HH:MM"); a
+// legacy date-only value ("YYYY-MM-DD") is accepted as midnight.
+func parseDateTime(s string) (time.Time, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}, false
 	}
-	h, err1 := strconv.Atoi(s[:2])
-	m, err2 := strconv.Atoi(s[3:])
-	if err1 != nil || err2 != nil || h < 0 || h > 23 || m < 0 || m > 59 {
-		return 0, 0, false
+	if t, err := time.ParseInLocation(dtLayout, s, time.Local); err == nil {
+		return t, true
 	}
-	return h, m, true
+	if t, err := time.ParseInLocation("2006-01-02", s, time.Local); err == nil {
+		return t, true
+	}
+	return time.Time{}, false
 }
 
 // v1.0 unified configuration. One file, managed by the program itself:
@@ -46,9 +54,8 @@ type ClientConfig struct {
 	Token             string  `json:"token"`
 	NodeName          string  `json:"node_name"`
 	QuotaG            float64 `json:"quota_g"`
-	ResetDay          int     `json:"reset_day"`
-	ResetTime         string  `json:"reset_time"` // "HH:MM" local, minute the cycle rolls over
-	Expiry            string  `json:"expiry"`
+	NextReset         string  `json:"next_reset"` // "YYYY-MM-DD HH:MM" local; "" = no auto reset
+	Expiry            string  `json:"expiry"`     // "YYYY-MM-DD HH:MM" local; "" = none
 	InitialUsedG      float64 `json:"initial_used_g"`
 	TrafficMode       string  `json:"traffic_mode"`
 	Interface         string  `json:"interface"`
@@ -86,11 +93,21 @@ func (c *AppConfig) applyDefaults() {
 	if c.Client.Interface == "" {
 		c.Client.Interface = "auto"
 	}
-	if c.Client.ResetDay < 1 || c.Client.ResetDay > 28 {
-		c.Client.ResetDay = 1
+	// Normalize the two datetimes to the canonical minute-precision
+	// format; an unparseable non-empty value is dropped.
+	if c.Client.NextReset != "" {
+		if t, ok := parseDateTime(c.Client.NextReset); ok {
+			c.Client.NextReset = t.Format(dtLayout)
+		} else {
+			c.Client.NextReset = ""
+		}
 	}
-	if _, _, ok := parseResetTime(c.Client.ResetTime); !ok {
-		c.Client.ResetTime = "00:00"
+	if c.Client.Expiry != "" {
+		if t, ok := parseDateTime(c.Client.Expiry); ok {
+			c.Client.Expiry = t.Format(dtLayout)
+		} else {
+			c.Client.Expiry = ""
+		}
 	}
 	if c.StateFile == "" {
 		c.StateFile = "/var/lib/vpsmon/state.json"
