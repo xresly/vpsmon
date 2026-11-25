@@ -281,12 +281,14 @@ func (a *App) handleClient(w http.ResponseWriter, r *http.Request) {
 	cfg := a.getCfg()
 	running, lastAt, lastErr, last := a.agent.snapshot()
 	renderClient(w, s, clientPageData{
-		Cfg:       cfg.Client,
-		Saved:     r.URL.Query().Get("saved") == "1",
-		Running:   running,
-		LastAt:    lastAt,
-		LastError: lastErr,
-		Last:      last,
+		Cfg:          cfg.Client,
+		Saved:        r.URL.Query().Get("saved") == "1",
+		Running:      running,
+		LastAt:       lastAt,
+		LastError:    lastErr,
+		Last:         last,
+		Ifaces:       listInterfaces(),
+		DefaultIface: defaultInterface(),
 	})
 }
 

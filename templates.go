@@ -184,12 +184,14 @@ func renderDashboard(w http.ResponseWriter, s *session, d dashboardData) {
 // ---------- client page ----------
 
 type clientPageData struct {
-	Cfg       ClientConfig
-	Saved     bool
-	Running   bool
-	LastAt    time.Time
-	LastError string
-	Last      *Report
+	Cfg          ClientConfig
+	Saved        bool
+	Running      bool
+	LastAt       time.Time
+	LastError    string
+	Last         *Report
+	Ifaces       []ifaceInfo
+	DefaultIface string
 }
 
 var clientTmpl = template.Must(template.New("client").Funcs(funcMap).Parse(`
@@ -225,8 +227,12 @@ var clientTmpl = template.Must(template.New("client").Funcs(funcMap).Parse(`
 <option value="in" {{if eq .Cfg.TrafficMode "in"}}selected{{end}}>in — 只算入站</option>
 <option value="max" {{if eq .Cfg.TrafficMode "max"}}selected{{end}}>max — 取上下行较大值</option>
 </select>
-<label>统计网卡（auto = 默认路由网卡）</label>
-<input type="text" name="interface" value="{{.Cfg.Interface}}">
+<label>统计网卡</label>
+<select name="interface">
+<option value="auto" {{if or (eq .Cfg.Interface "auto") (eq .Cfg.Interface "")}}selected{{end}}>auto — 自动选择（默认路由网卡{{if .DefaultIface}}：{{.DefaultIface}}{{end}}）</option>
+{{range .Ifaces}}<option value="{{.Name}}" {{if eq $.Cfg.Interface .Name}}selected{{end}}>{{.Label}}</option>{{end}}
+</select>
+<div class="hint">列表为本机实际读取到的网卡，累计流量是该网卡开机以来的总流量。一般保持 auto 即可；只有想单独统计某块网卡时才需要指定。</div>
 <label>采样间隔（秒）</label>
 <input type="number" name="sample_interval_sec" value="{{.Cfg.SampleIntervalSec}}">
 <label>汇报间隔（秒）</label>

@@ -2,7 +2,9 @@ package main
 
 import (
 	"bufio"
+	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -221,6 +223,58 @@ func defaultInterface() string {
 }
 
 var virtualPrefixes = []string{"lo", "docker", "veth", "br-", "virbr", "tun", "tap", "wg", "vnet"}
+
+func isVirtualIface(name string) bool {
+	for _, p := range virtualPrefixes {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// ifaceInfo describes one network interface for the client settings page.
+type ifaceInfo struct {
+	Name    string
+	Label   string
+	Default bool
+	Virtual bool
+}
+
+// listInterfaces enumerates the machine's interfaces with their cumulative
+// counters (default-route interface first) for the settings dropdown.
+func listInterfaces() []ifaceInfo {
+	dev := readNetDev()
+	def := defaultInterface()
+	names := make([]string, 0, len(dev))
+	for n := range dev {
+		names = append(names, n)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		if names[i] == def {
+			return true
+		}
+		if names[j] == def {
+			return false
+		}
+		return names[i] < names[j]
+	})
+	out := make([]ifaceInfo, 0, len(names))
+	for _, n := range names {
+		c := dev[n]
+		label := fmt.Sprintf("%s（累计 ↓ %.2f G / ↑ %.2f G", n,
+			float64(c.RX)/float64(bytesPerG), float64(c.TX)/float64(bytesPerG))
+		if n == def {
+			label += " · 默认路由"
+		}
+		if isVirtualIface(n) {
+			label += " · 虚拟网卡"
+		}
+		label += "）"
+		out = append(out, ifaceInfo{Name: n, Label: label, Default: n == def, Virtual: isVirtualIface(n)})
+	}
+	return out
+}
 
 // pickInterfaces resolves the configured interface selection to a list of
 // real interfaces to sum. "auto" = the default-route interface; if that
