@@ -293,6 +293,11 @@ func (a *App) handleClient(w http.ResponseWriter, r *http.Request) {
 		c.NodeName = fStr(r, "node_name", c.NodeName)
 		c.QuotaG = fFloat(r, "quota_g", c.QuotaG)
 		c.ResetDay = fInt(r, "reset_day", c.ResetDay)
+		if rt := strings.TrimSpace(r.FormValue("reset_time")); rt != "" {
+			if _, _, ok := parseResetTime(rt); ok {
+				c.ResetTime = rt
+			}
+		}
 		c.Expiry = strings.TrimSpace(r.FormValue("expiry"))
 		c.InitialUsedG = fFloat(r, "initial_used_g", c.InitialUsedG)
 		c.TrafficMode = fStr(r, "traffic_mode", c.TrafficMode)

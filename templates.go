@@ -182,7 +182,7 @@ var dashTmpl = template.Must(template.New("dash").Funcs(funcMap).Parse(`
 <td data-label="剩余">{{gu .Report.Traffic.RemainingG}}</td>
 <td data-label="过去 5 分钟">{{gu .Report.Traffic.Last5mG}}</td>
 <td data-label="累计">{{gu .Report.Traffic.TotalG}}</td>
-<td data-label="下次重置">{{.Report.Traffic.NextReset}}<br><small>每月 {{.Report.Traffic.ResetDay}} 日</small></td>
+<td data-label="下次重置">{{.Report.Traffic.NextReset}}<br><small>每月 {{.Report.Traffic.ResetDay}} 日{{if and .Report.Traffic.ResetTime (ne .Report.Traffic.ResetTime "00:00")}} {{.Report.Traffic.ResetTime}}{{end}}</small></td>
 <td data-label="到期">{{if .Report.Traffic.Expiry}}{{.Report.Traffic.Expiry}}{{if .Report.Traffic.DaysLeft}}<br><small>剩 {{.Report.Traffic.DaysLeft}} 天</small>{{end}}{{else}}-{{end}}</td>
 <td data-label="最后汇报">{{ago .ReceivedAt}}</td>
 </tr>
@@ -237,6 +237,9 @@ var clientTmpl = template.Must(template.New("client").Funcs(funcMap).Parse(`
 <input type="number" step="0.1" name="quota_g" value="{{.Cfg.QuotaG}}">
 <label>每月重置日（1-28）</label>
 <input type="number" name="reset_day" value="{{.Cfg.ResetDay}}">
+<label>每月重置时间（时:分）</label>
+<input type="time" name="reset_time" value="{{.Cfg.ResetTime}}">
+<div class="hint">重置时刻按本机时区，精确到分 — 建议与服务商的实际重置时刻对齐（如面板显示 21:18 重置就填 21:18）。</div>
 <label>到期日（YYYY-MM-DD，可空）</label>
 <input type="text" name="expiry" value="{{.Cfg.Expiry}}">
 <label>初始已用流量（G）— 仅在首次运行或重新播种时生效</label>

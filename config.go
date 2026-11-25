@@ -5,7 +5,21 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 )
+
+// parseResetTime parses an "HH:MM" string into hour and minute.
+func parseResetTime(s string) (int, int, bool) {
+	if len(s) != 5 || s[2] != ':' {
+		return 0, 0, false
+	}
+	h, err1 := strconv.Atoi(s[:2])
+	m, err2 := strconv.Atoi(s[3:])
+	if err1 != nil || err2 != nil || h < 0 || h > 23 || m < 0 || m > 59 {
+		return 0, 0, false
+	}
+	return h, m, true
+}
 
 // v1.0 unified configuration. One file, managed by the program itself:
 // the install script creates it (vpsmon init), the WebUI edits it, the
@@ -33,6 +47,7 @@ type ClientConfig struct {
 	NodeName          string  `json:"node_name"`
 	QuotaG            float64 `json:"quota_g"`
 	ResetDay          int     `json:"reset_day"`
+	ResetTime         string  `json:"reset_time"` // "HH:MM" local, minute the cycle rolls over
 	Expiry            string  `json:"expiry"`
 	InitialUsedG      float64 `json:"initial_used_g"`
 	TrafficMode       string  `json:"traffic_mode"`
@@ -73,6 +88,9 @@ func (c *AppConfig) applyDefaults() {
 	}
 	if c.Client.ResetDay < 1 || c.Client.ResetDay > 28 {
 		c.Client.ResetDay = 1
+	}
+	if _, _, ok := parseResetTime(c.Client.ResetTime); !ok {
+		c.Client.ResetTime = "00:00"
 	}
 	if c.StateFile == "" {
 		c.StateFile = "/var/lib/vpsmon/state.json"

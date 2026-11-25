@@ -27,6 +27,7 @@ type TrafficReport struct {
 	Last5mWindowSec int     `json:"last5m_window_sec"`
 	TotalG          float64 `json:"total_g"` // lifetime counted, combined
 	ResetDay        int     `json:"reset_day"`
+	ResetTime       string  `json:"reset_time"`
 	NextReset       string  `json:"next_reset"`
 	Expiry          string  `json:"expiry"`
 	DaysLeft        *int    `json:"days_left,omitempty"`
@@ -93,16 +94,18 @@ func combined(rx, tx uint64, mode string) uint64 {
 	}
 }
 
-// cycleStartFor returns 00:00 local on the most recent reset day <= now.
-func cycleStartFor(now time.Time, resetDay int) time.Time {
+// cycleStartFor returns the most recent monthly reset moment <= now:
+// resetDay (clamped to 1..28) at resetTime ("HH:MM", local).
+func cycleStartFor(now time.Time, resetDay int, resetTime string) time.Time {
 	if resetDay < 1 {
 		resetDay = 1
 	}
 	if resetDay > 28 {
 		resetDay = 28
 	}
+	hh, mm, _ := parseResetTime(resetTime)
 	loc := now.Location()
-	cand := time.Date(now.Year(), now.Month(), resetDay, 0, 0, 0, 0, loc)
+	cand := time.Date(now.Year(), now.Month(), resetDay, hh, mm, 0, 0, loc)
 	if cand.After(now) {
 		cand = cand.AddDate(0, -1, 0)
 	}
@@ -174,12 +177,21 @@ func (a *agentState) sample(cfg *ClientConfig, now time.Time) {
 	a.LastRawRX, a.LastRawTX = raw.RX, raw.TX
 
 	// cycle rollover
-	key := cycleStartFor(now, cfg.ResetDay).Format("2006-01-02")
+	cycleStart := cycleStartFor(now, cfg.ResetDay, cfg.ResetTime)
+	key := cycleStart.Format("2006-01-02 15:04")
 	if a.CycleKey != key {
-		a.CycleKey = key
-		a.SeedBytes = 0
-		a.CycleStartRX = a.LifeRX
-		a.CycleStartTX = a.LifeTX
+		// Migration: keys written before reset_time existed are
+		// date-only. If the date still matches this cycle's start,
+		// only the key format changed — adopt it without rolling
+		// over (the seed and baseline stay valid).
+		if len(a.CycleKey) == 10 && a.CycleKey == cycleStart.Format("2006-01-02") {
+			a.CycleKey = key
+		} else {
+			a.CycleKey = key
+			a.SeedBytes = 0
+			a.CycleStartRX = a.LifeRX
+			a.CycleStartTX = a.LifeTX
+		}
 	}
 
 	// CPU percentage since the previous sample
@@ -293,7 +305,11 @@ func (a *agentState) buildReport(cfg *ClientConfig, now time.Time) Report {
 			rep.DiskPct = float64(used) / float64(tot) * 100
 		}
 	}
-	cycleStart := cycleStartFor(now, cfg.ResetDay)
+	cycleStart := cycleStartFor(now, cfg.ResetDay, cfg.ResetTime)
+	nextReset := cycleStart.AddDate(0, 1, 0).Format("2006-01-02")
+	if hh, mm, _ := parseResetTime(cfg.ResetTime); hh != 0 || mm != 0 {
+		nextReset = cycleStart.AddDate(0, 1, 0).Format("2006-01-02 15:04")
+	}
 	tr := TrafficReport{
 		QuotaG:          cfg.QuotaG,
 		CycleUsedG:      cycleUsedB / bytesPerG,
@@ -305,7 +321,8 @@ func (a *agentState) buildReport(cfg *ClientConfig, now time.Time) Report {
 		Last5mWindowSec: windowSec,
 		TotalG:          float64(combined(a.LifeRX, a.LifeTX, mode)) / bytesPerG,
 		ResetDay:        cfg.ResetDay,
-		NextReset:       cycleStart.AddDate(0, 1, 0).Format("2006-01-02"),
+		ResetTime:       cfg.ResetTime,
+		NextReset:       nextReset,
 		Expiry:          cfg.Expiry,
 	}
 	tr.RemainingG = tr.QuotaG - tr.CycleUsedG
@@ -398,7 +415,7 @@ func runAgent(ctx context.Context, cfg ClientConfig, stateFile string, status *a
 		state = &agentState{
 			BootID:    readBootID(),
 			SeedBytes: cfg.InitialUsedG * bytesPerG,
-			CycleKey:  cycleStartFor(now, cfg.ResetDay).Format("2006-01-02"),
+			CycleKey:  cycleStartFor(now, cfg.ResetDay, cfg.ResetTime).Format("2006-01-02 15:04"),
 		}
 		dev := readNetDev()
 		ifaces := pickInterfaces(&cfg, dev)
