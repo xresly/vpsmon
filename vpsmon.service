@@ -1,0 +1,16 @@
+[Unit]
+Description=vpsmon - VPS monitor panel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/vpsmon run -config /etc/vpsmon/config.json
+WorkingDirectory=/var/lib/vpsmon
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
