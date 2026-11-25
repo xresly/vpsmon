@@ -46,7 +46,7 @@ const css = `
 body{font-family:system-ui,sans-serif;background:#0f1419;color:#e6e6e6;margin:0;padding:20px}
 h1{font-size:20px;margin:0 0 4px}h2{font-size:16px;margin:22px 0 8px}
 .sub{color:#9aa4b2;font-size:13px;margin-bottom:16px}
-nav{display:flex;gap:14px;align-items:center;margin-bottom:18px}
+nav{display:flex;gap:14px;align-items:center;margin-bottom:18px;flex-wrap:wrap}
 nav a{color:#9aa4b2;text-decoration:none;font-size:15px;padding:6px 10px;border-radius:6px}
 nav a.act{color:#fff;background:#2563eb}
 nav form{margin-left:auto}
@@ -63,14 +63,34 @@ tr:last-child td{border-bottom:0}
 small{color:#9aa4b2}
 .card{background:#1a222c;border-radius:10px;padding:18px;max-width:640px}
 label{display:block;font-size:13px;color:#9aa4b2;margin:12px 0 4px}
-input[type=text],input[type=password],input[type=number],select{width:100%;box-sizing:border-box;padding:8px;border-radius:6px;border:1px solid #374151;background:#0f1419;color:#e6e6e6}
+input[type=text],input[type=password],input[type=number],select{width:100%;box-sizing:border-box;padding:10px;border-radius:6px;border:1px solid #374151;background:#0f1419;color:#e6e6e6;font-size:16px}
 input[type=checkbox]{transform:scale(1.2);margin-right:8px}
-button.btn{margin-top:16px;padding:9px 18px;border:0;border-radius:6px;background:#2563eb;color:#fff;cursor:pointer;font-size:14px}
+button.btn{margin-top:16px;padding:9px 18px;min-height:44px;border:0;border-radius:6px;background:#2563eb;color:#fff;cursor:pointer;font-size:15px}
 button.alt{background:#374151}
 .ok{background:#14532d;color:#bbf7d0;padding:10px 14px;border-radius:8px;margin-bottom:14px;max-width:640px}
 .err{background:#7f1d1d;color:#fecaca;padding:10px 14px;border-radius:8px;margin-bottom:14px;max-width:640px}
 .hint{color:#9aa4b2;font-size:13px;line-height:1.6}
-code{background:#26303c;padding:1px 5px;border-radius:4px}
+code{background:#26303c;padding:1px 5px;border-radius:4px;word-break:break-all}
+@media (max-width:860px){
+body{padding:12px}
+h1{font-size:18px}h2{font-size:15px;margin:18px 0 6px}
+.sub{font-size:12px}
+nav{gap:4px;margin-bottom:14px}
+nav a{font-size:14px;padding:9px 10px}
+nav button{font-size:14px;padding:9px 6px}
+.card{padding:14px}
+.bar{width:84px;margin-right:6px}
+table,tbody,tr,td{display:block;width:100%;box-sizing:border-box}
+table{background:none;border-radius:0;overflow:visible}
+table>tbody>tr:first-child{display:none}
+tbody>tr{background:#1a222c;border-radius:10px;padding:8px 14px;margin-bottom:12px}
+td{display:block;padding:7px 0;font-size:14px;white-space:normal;text-align:right;border-bottom:1px solid #232d38;overflow:hidden}
+tr>td:last-child{border-bottom:0}
+td::before{content:attr(data-label);float:left;color:#9aa4b2;font-size:12px;padding-top:2px}
+td:first-child{text-align:left;padding:9px 0}
+td:first-child::before{content:none}
+td:first-child strong{font-size:16px}
+}
 `
 
 func navHTML(active, csrf string) string {
@@ -109,7 +129,7 @@ func renderLogin(w http.ResponseWriter, errMsg string) {
 		`<title>VPS 监控 - 登录</title><style>`+css+`</style></head>`+
 		`<body><div style="display:flex;justify-content:center;padding-top:12vh"><div>`+
 		`<h1>VPS 监控</h1><div class="sub">vpsmon `+version+`</div>`+err+
-		`<form method="post" action="/login" class="card" style="width:300px">`+
+		`<form method="post" action="/login" class="card" style="width:min(300px,84vw)">`+
 		`<label>用户名</label><input type="text" name="username" autocomplete="username">`+
 		`<label>密码</label><input type="password" name="password" autocomplete="current-password">`+
 		`<button class="btn" type="submit" style="width:100%">登录</button></form>`+
@@ -133,17 +153,17 @@ var dashTmpl = template.Must(template.New("dash").Funcs(funcMap).Parse(`
 {{range .Nodes}}
 <tr>
 <td><strong>{{.Report.Node}}</strong>{{if .Self}} <small>(本机)</small>{{end}}<br><small>{{.Report.Hostname}} · {{.Report.OS}}</small></td>
-<td>{{if .Online}}<span class="dot on"></span>在线{{else}}<span class="dot off"></span>离线{{end}}</td>
-<td>{{pct .Report.CPUPct}}<br><small>5 分钟均值 {{pct .Report.CPUPct5m}}</small></td>
-<td>{{f2 .Report.MemUsedG}} / {{f2 .Report.MemTotalG}} G<br><small>{{pct .Report.MemPct}}</small></td>
-<td>{{f1 .Report.DiskUsedG}} / {{f1 .Report.DiskTotalG}} G<br><small>{{pct .Report.DiskPct}}</small></td>
-<td><span class="bar"><i style="width:{{barpct .Report.Traffic.CycleUsedG .Report.Traffic.QuotaG}}%" class="{{if gt (barpct .Report.Traffic.CycleUsedG .Report.Traffic.QuotaG) 95.0}}bad{{else if gt (barpct .Report.Traffic.CycleUsedG .Report.Traffic.QuotaG) 80.0}}warn{{end}}"></i></span>{{f1 .Report.Traffic.CycleUsedG}} / {{f1 .Report.Traffic.QuotaG}} G</td>
-<td>{{f1 .Report.Traffic.RemainingG}} G</td>
-<td>{{f2 .Report.Traffic.Last5mG}} G</td>
-<td>{{f1 .Report.Traffic.TotalG}} G</td>
-<td>{{.Report.Traffic.NextReset}}<br><small>每月 {{.Report.Traffic.ResetDay}} 日</small></td>
-<td>{{if .Report.Traffic.Expiry}}{{.Report.Traffic.Expiry}}{{if .Report.Traffic.DaysLeft}}<br><small>剩 {{.Report.Traffic.DaysLeft}} 天</small>{{end}}{{else}}-{{end}}</td>
-<td>{{ago .ReceivedAt}}</td>
+<td data-label="状态">{{if .Online}}<span class="dot on"></span>在线{{else}}<span class="dot off"></span>离线{{end}}</td>
+<td data-label="CPU">{{pct .Report.CPUPct}}<br><small>5 分钟均值 {{pct .Report.CPUPct5m}}</small></td>
+<td data-label="内存">{{f2 .Report.MemUsedG}} / {{f2 .Report.MemTotalG}} G<br><small>{{pct .Report.MemPct}}</small></td>
+<td data-label="磁盘">{{f1 .Report.DiskUsedG}} / {{f1 .Report.DiskTotalG}} G<br><small>{{pct .Report.DiskPct}}</small></td>
+<td data-label="当月流量"><span class="bar"><i style="width:{{barpct .Report.Traffic.CycleUsedG .Report.Traffic.QuotaG}}%" class="{{if gt (barpct .Report.Traffic.CycleUsedG .Report.Traffic.QuotaG) 95.0}}bad{{else if gt (barpct .Report.Traffic.CycleUsedG .Report.Traffic.QuotaG) 80.0}}warn{{end}}"></i></span>{{f1 .Report.Traffic.CycleUsedG}} / {{f1 .Report.Traffic.QuotaG}} G</td>
+<td data-label="剩余">{{f1 .Report.Traffic.RemainingG}} G</td>
+<td data-label="过去 5 分钟">{{f2 .Report.Traffic.Last5mG}} G</td>
+<td data-label="累计">{{f1 .Report.Traffic.TotalG}} G</td>
+<td data-label="下次重置">{{.Report.Traffic.NextReset}}<br><small>每月 {{.Report.Traffic.ResetDay}} 日</small></td>
+<td data-label="到期">{{if .Report.Traffic.Expiry}}{{.Report.Traffic.Expiry}}{{if .Report.Traffic.DaysLeft}}<br><small>剩 {{.Report.Traffic.DaysLeft}} 天</small>{{end}}{{else}}-{{end}}</td>
+<td data-label="最后汇报">{{ago .ReceivedAt}}</td>
 </tr>
 {{else}}
 <tr><td colspan="12">暂无节点汇报</td></tr>

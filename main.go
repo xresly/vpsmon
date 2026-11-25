@@ -25,7 +25,7 @@ import (
 	"syscall"
 )
 
-const version = "1.0.0"
+const version = "1.0.1"
 
 // bytesPerG — all traffic figures in config, reports and the
 // dashboard are in G (1 G = 1024^3 bytes).
